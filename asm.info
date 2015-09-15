@@ -1,0 +1,36 @@
+GLOBAL {
+    OUTPUTNAME      "asm.s";
+    INPUTNAME       "asm.prg";
+    STARTADDR       $BFFE;
+    PAGELENGTH      0;                  # No paging
+    CPU             "6502";
+};
+
+#SEGMENT { START $07FF;  END   $080F; NAME "cpm1"; };
+#SEGMENT { START $CA00;  END   $D000; NAME "cpm2"; };
+
+RANGE { START $BFFE; END $BFFF; TYPE ByteTable; };
+RANGE { START $C003; END $C071; TYPE ByteTable; };
+RANGE { START $C0A1; END $C0B8; TYPE ByteTable; };
+RANGE { START $C0FB; END $C124; TYPE ByteTable; };
+RANGE { START $C1FC; END $C241; TYPE ByteTable; };
+RANGE { START $C242; END $C541; TYPE Code; };
+RANGE { START $C542; END $C547; TYPE ByteTable; };
+
+#RANGE { START $8004; END $8008; TYPE TextTable; };
+#RANGE { START $80AD; END $80B0; TYPE TextTable; };
+#RANGE { START $80DE; END $80EB; TYPE AddrTable; };
+#RANGE { START $8449; END $8452; TYPE ByteTable; };
+#RANGE { START $85FD; END $860A; TYPE ByteTable; };
+#RANGE { START $860B; END $8691; TYPE TextTable; };
+#RANGE { START $8693; END $86CC; TYPE ByteTable; };
+#RANGE { START $89FB; END $8A18; TYPE TextTable; };
+#RANGE { START $8A1B; END $8A1B; TYPE ByteTable; };
+#RANGE { START $8E87; END $8EBA; TYPE TextTable; };
+#RANGE { START $918B; END $9196; TYPE ByteTable; }; # BASIC loader
+#RANGE { START $94C1; END $94F8; TYPE TextTable; };
+#RANGE { START $973B; END $975C; TYPE TextTable; };
+#RANGE { START $98D2; END $98D4; TYPE ByteTable; };
+#RANGE { START $994B; END $995A; TYPE ByteTable; };
+#RANGE { START $9DC4; END $9DFF; TYPE ByteTable; };
+
