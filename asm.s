@@ -5,14 +5,29 @@
 
         .setcpu "6502"
 
-; contains temporary data for explosion
-pagea := $C800
-pageb := $C900
+; temporary data for two concurrent explosions
+explosion1 := $C800
+explosion2 := $C900
 
 ; contains a ring buffer for each player containing
 ; the last 32 pixels drawn for kill detection
 history_x := $CA00
 history_y := $CB00
+
+ycoord    := $FA
+xcoord_lo := $FC
+xcoord_hi := $FD
+
+off_xcoord_lo    := 0
+off_xcoord_hi    := 20
+off_xcoord_fract := 40
+off_ycoord       := 60
+off_ycoord_fract := 80
+off_rnd_x_lo     := 100
+off_rnd_x_hi     := 120
+off_rnd_y_lo     := 140
+off_rnd_y_hi     := 160
+off_framecount   := 180
 
         jmp     entry
 
@@ -109,8 +124,8 @@ init_screen:
         lda     #$18
         sta     $D018; screen RAM at $0400, hi-res at $2000
         lda     #0
-        sta     pagea + 180
-        sta     pageb + 180
+        sta     explosion1 + off_framecount
+        sta     explosion2 + off_framecount ; no explosions in progress
         sta     kill_index
         tay
         ldx     #$20
@@ -141,21 +156,21 @@ or_tab: .byte   $80,$40,$20,$10,$08,$04,$02,$01
         lda     #$00
         rts
 
-; converts a coordinate in ($FC/$FD)/Y into
+; converts a coordinate in (xcoord_lo/xcoord_hi)/Y into
 ; * a byte offset into the bitmap in $FE/$FF
 ; * the lowest 3 bits of the coordinate in X and Y
 offset_from_coord:
         cpy     #200
         bcs     :-    ; Y exceeds coord space
-        ldx     $FD   ; X MSB
+        ldx     xcoord_hi  ; X MSB
         beq     :+    ; zero is fine
         dex
         bne     :-    ; != 1 -> error
-        ldx     $FC
+        ldx     xcoord_lo
         cpx     #320 - 256
         bcs     :-    ; > 320 -> error
 :       pha
-        lda     $FC
+        lda     xcoord_lo
         and     #$F8
         sta     $FB   ; X & ~3
         tya
@@ -172,9 +187,9 @@ offset_from_coord:
         adc     $FB   ; + X & ~3
         sta     $FE
         lda     hirestab,y
-        adc     $FD   ; + X MSB
+        adc     xcoord_hi  ; + X MSB
         sta     $FF
-        lda     $FC
+        lda     xcoord_lo
         and     #$07  ; X & 7
         tax
         pla           ; Y
@@ -183,7 +198,7 @@ offset_from_coord:
         pla
         rts
 
-; sets (Z=1) or clears (Z=0) the pixel at coordinate ($FC/$FD)/Y
+; sets (Z=1) or clears (Z=0) the pixel at coordinate (xcoord_lo/xcoord_hi)/Y
 set_or_clear_pixel:
         jsr     offset_from_coord
         php
@@ -196,7 +211,7 @@ LC174:  sta     ($FE),y
         clc               ; no error
         rts
 
-; reads the pixel at coordinate ($FC/$FD)/Y
+; reads the pixel at coordinate (xcoord_lo/xcoord_hi)/Y
 read_pixel:
         jsr     offset_from_coord
         lda     ($FE),y
@@ -207,20 +222,20 @@ read_pixel:
 draw_border:  
 ; line on the left and right edges of the screen
         lda     #198
-        sta     $FA
-:       ldy     $FA ; Y coord
+        sta     ycoord
+:       ldy     ycoord ; Y coord
         lda     #>1
-        sta     $FD
+        sta     xcoord_hi
         lda     #<1 ; left
-        sta     $FC
+        sta     xcoord_lo
         jsr     set_or_clear_pixel ; set
-        ldy     $FA
+        ldy     ycoord
         lda     #>318
-        sta     $FD
+        sta     xcoord_hi
         lda     #<318 ; right
-        sta     $FC
+        sta     xcoord_lo
         jsr     set_or_clear_pixel ; set
-        dec     $FA
+        dec     ycoord
         bne     :-
 
 ; line at the top and bottom edges of the screen
@@ -230,16 +245,16 @@ draw_border:
         ldy     #1 ; top
         tya
         jsr     set_or_clear_pixel ; set
-        lda     $FC
+        lda     xcoord_lo
         sec
         sbc     #1
-        sta     $FC
-        lda     $FD
+        sta     xcoord_lo
+        lda     xcoord_hi
         sbc     #0
-        sta     $FD
+        sta     xcoord_hi
         bne     :-
-        lda     $FC
-        cmp     #$01
+        lda     xcoord_lo
+        cmp     #1
         bne     :-
         rts
 
@@ -332,16 +347,16 @@ player_loop:
         clc
         adc     addition_tab_x_lo,y
         sta     xpositions_lo,x
-        sta     $FC
+        sta     xcoord_lo
         lda     xpositions_hi,x
         adc     addition_tab_x_hi,y
         sta     xpositions_hi,x
-        sta     $FD
+        sta     xcoord_hi
         lda     ypositions,x
         clc
         adc     addition_tab_y,y
         sta     ypositions,x
-        sta     $FA
+        sta     ycoord
         tay
         jsr     read_pixel
         beq     player_survived
@@ -355,10 +370,10 @@ player_loop:
         ldy     #32 * 6 - 1 ; 32 entries for 6 players
 find_killer_loop:
         lda     history_x,y
-        cmp     $FC   ; compare X (lo)
+        cmp     xcoord_lo   ; compare X (lo)
         bne     :+
         lda     history_y,y
-        cmp     $FA   ; compare Y
+        cmp     ycoord   ; compare Y
         beq     LC2B2 ; found a match
 :       dey
         cpy     #$FF
@@ -381,7 +396,7 @@ LC2B2:  tya
         bpl     LC2AC ; always
 
 player_survived:
-        ldy     $FA
+        ldy     ycoord
         lda     #1
         jsr     set_or_clear_pixel
 ; save history for kill detection
@@ -393,21 +408,21 @@ player_survived:
         asl     a ; player << 5
         ora     history_index
         tay
-        lda     $FC
+        lda     xcoord_lo
         sta     history_x,y
-        lda     $FA
+        lda     ycoord
         sta     history_y,y
 ; test for escape
-        lda     $FA ; Y coord
+        lda     ycoord ; Y coord
         beq     player_escaped ; Y == 0 -> escaped
         cmp     #199
         beq     player_escaped ; Y == 199 -> escaped
-        lda     $FD
-        ora     $FC
+        lda     xcoord_hi
+        ora     xcoord_lo
         beq     player_escaped ; X == 0 -> escaped
-        lda     $FD
+        lda     xcoord_hi
         beq     game_step_skip
-        lda     $FC
+        lda     xcoord_lo
         cmp     #320 - 256 - 1
         beq     player_escaped ; X == 319 -> escaped
 game_step_skip:
@@ -453,11 +468,11 @@ turn_left_pressed:
         sta     keys_pressed,y ; reset pressed key
         jmp     input_loop
 
-set_pagea:
-        lda     #>pagea
+set_explosion1:
+        lda     #>explosion1
         .byte $2c
-set_pageb:
-        lda     #>pageb
+set_explosion2:
+        lda     #>explosion2
         sta     LC3E1
         sta     LC3E6
         sta     LC3EB
@@ -490,57 +505,61 @@ set_pageb:
         rts
 
 explosion_init:
-        jsr     set_pagea
-        lda     pagea + 180
-        beq     LC3BF
-        jsr     set_pageb
-LC3BF:
+        jsr     set_explosion1
+        lda     explosion1 + off_framecount
+        beq     :+ ; not in progress, use that one
+        jsr     set_explosion2 ; otherwise use #2
+:
 LC3C1           := * + 2
-        lda     pagea + 180
-        beq     LC3DB
-        lda     $FA
+        lda     explosion1 + off_framecount
+        beq     :+ ; not in progress
+; cancel existing explosion, because we need to reuse the struct
+        lda     ycoord
         pha
-        lda     $FC
+        lda     xcoord_lo
         pha
-        lda     $FD
+        lda     xcoord_hi
         pha
-        lda     #$00
-        jsr     LC470
+        lda     #0
+        jsr     draw_pixels ; clear current explosion pixels
         pla
-        sta     $FD
+        sta     xcoord_hi
         pla
-        sta     $FC
+        sta     xcoord_lo
         pla
-        sta     $FA
-LC3DB:  ldy     #19
-        lda     #50
+        sta     ycoord
+; fill explosion struct with initial state
+:       ldy     #19
+        lda     #50 ; explosion takes 50 frames = 1 s
 LC3E1           := * + 2
-        sta     pagea + 180
-LC3E2:  lda     $FA
+        sta     explosion1 + off_framecount
+; fill 20 entries with the current position
+LC3E2:  lda     ycoord
 LC3E6           := * + 2
-        sta     pagea + 60,y
-        lda     $FC
+        sta     explosion1 + off_ycoord,y
+        lda     xcoord_lo
 LC3EB           := * + 2
-        sta     pagea + 0,y
-        lda     $FD
+        sta     explosion1 + off_xcoord_lo,y
+        lda     xcoord_hi
 LC3F0           := * + 2
-        sta     pagea + 20,y
+        sta     explosion1 + off_xcoord_hi,y
+; get 20 tuples of random numbers between -128 and +127
         jsr     get_random
         sbc     #$80
 LC3F8           := * + 2
-        sta     pagea + 100,y
-        lda     #$00
-        sbc     #$00
+        sta     explosion1 + off_rnd_x_lo,y
+        lda     #0
+        sbc     #0
 LC3FF           := * + 2
-        sta     pagea + 120,y
+        sta     explosion1 + off_rnd_x_hi,y
         jsr     get_random
         sbc     #$80
 LC407           := * + 2
-        sta     pagea + 140,y
-        lda     #$00
-        sbc     #$00
+        sta     explosion1 + off_rnd_y_lo,y
+        lda     #0
+        sbc     #0
 LC40E           := * + 2
-        sta     pagea + 160,y
+        sta     explosion1 + off_rnd_y_hi,y
         dey
         bpl     LC3E2
         rts
@@ -557,67 +576,73 @@ rnd_seed:
         .byte 0
 
 explosion_step:
-        jsr     set_pagea ; run the sequence above twice, with pagea and pageb
-        jsr     LC42B
-        jsr     set_pageb
-LC42B:
+; run the sequence above twice, with explosion1 and explosion2
+        jsr     set_explosion1
+        jsr     animate_one_explosion
+        jsr     set_explosion2
+animate_one_explosion:
 LC42D           := * + 2
-        lda     pagea + 180
-        beq     rts0
-        lda     #0 ; flag to clear pixel
-        jsr     LC470
+        lda     explosion1 + off_framecount
+        beq     rts0 ; no explosion in progress
+        lda     #0
+        jsr     draw_pixels ; clear pixels from previous step
 LC437           := * + 2
-        dec     pagea + 180
+        dec     explosion1 + off_framecount
         beq     rts0
         ldy     #19
 LC43C:
+; add random number (-128..127) to fractional, overflowing into y
 LC43E           := * + 2
-        lda     pagea + 80,y
+        lda     explosion1 + off_ycoord_fract,y
         clc
 LC442           := * + 2
-        adc     pagea + 140,y
+        adc     explosion1 + off_rnd_y_lo,y
 LC445           := * + 2
-        sta     pagea + 80,y
+        sta     explosion1 + off_ycoord_fract,y
 LC448           := * + 2
-        lda     pagea + 60,y
+        lda     explosion1 + off_ycoord,y
 LC44B           := * + 2
-        adc     pagea + 160,y
+        adc     explosion1 + off_rnd_y_hi,y
 LC44E           := * + 2
-        sta     pagea + 60,y
+        sta     explosion1 + off_ycoord,y
 LC451           := * + 2
-        lda     pagea + 40,y
+; same with x
+        lda     explosion1 + off_xcoord_fract,y
         clc
 LC455           := * + 2
-        adc     pagea + 100,y
+        adc     explosion1 + off_rnd_x_lo,y
 LC458           := * + 2
-        sta     pagea + 40,y
+        sta     explosion1 + off_xcoord_fract,y
 LC45B           := * + 2
-        lda     pagea + 0,y
+        lda     explosion1 + off_xcoord_lo,y
 LC45E           := * + 2
-        adc     pagea + 120,y
+        adc     explosion1 + off_rnd_x_hi,y
 LC461           := * + 2
-        sta     pagea + 0,y
+        sta     explosion1 + off_xcoord_lo,y
 LC464           := * + 2
-        lda     pagea + 20,y
+        lda     explosion1 + off_xcoord_hi,y
 LC467           := * + 2
-        adc     pagea + 120,y
+        adc     explosion1 + off_rnd_x_hi,y
 LC46A           := * + 2
-        sta     pagea + 20,y
+        sta     explosion1 + off_xcoord_hi,y
         dey
         bpl     LC43C
         lda     #1 ; flag to set pixel
-LC470:  pha
+
+; sets (A=1) or clears (A=0) 20 pixels from an array
+draw_pixels:
+        pha
         ldx     #19
         stx     explosion_index
 LC476:
 LC478           := * + 2
-        lda     pagea + 0,x
-        sta     $FC ; X lo
+        lda     explosion1 + off_xcoord_lo,x
+        sta     xcoord_lo ; X lo
 LC47D           := * + 2
-        lda     pagea + 20,x
-        sta     $FD ; X hi
+        lda     explosion1 + off_xcoord_hi,x
+        sta     xcoord_hi ; X hi
 LC482           := * + 2
-        lda     pagea + 60,x
+        lda     explosion1 + off_ycoord,x
         tay         ; Y
         pla
         pha
@@ -685,9 +710,9 @@ l1:     lda     player_alive,x
         bpl     l1
         cpy     #2
         bcs     main_loop ; more than one player alive
-        lda     pagea + 180
-        ora     pageb + 180
-        bne     main_loop
+        lda     explosion1 + off_framecount
+        ora     explosion2 + off_framecount
+        bne     main_loop ; explosions still in progress
 end_game:
         ldx     #<$EA34 ; restore IRQ handler
         ldy     #>$EA34 ; (minus soft RTC driver)
