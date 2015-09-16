@@ -1,44 +1,57 @@
-; da65 V2.13.2 - (C) Copyright 2000-2009,  Ullrich von Bassewitz
-; Created:    2015-09-15 08:21:52
-; Input file: asm.prg
-; Page:       1
-
+; Ultimage Tron II by Oliver Stiller
 
         .setcpu "6502"
 
-LEA81           := $EA81
+pagea := $C800
+pageb := $C900
+page1 := $CA00
+page2 := $CB00
+
         .byte   $00,$C0
-        jmp     LC494
-LC003:  .byte   $01,$01,$01,$01,$01,$01
+
+        jmp     entry
+
+player_participating:
+        .byte   $01,$01,$01,$01,$01,$01
+
 LC009:  .byte   $00,$00,$00,$00,$00,$00
-LC00F:  .byte   $00
-LC010:  .byte   $00
+winner: .byte   $00
+
+escaped_player:
+        .byte   $00
+
 LC011:  .byte   $00,$02,$04,$06,$08,$0A
-LC017:  .byte   $80,$80,$80,$80,$80,$80
-LC01D:  .byte   $80,$80,$80,$80,$80,$80
-LC023:  .byte   $00,$00,$00,$00,$00,$00,$00,$00
+
+tab6:   .byte   $80,$80,$80,$80,$80,$80
+tab5:   .byte   $80,$80,$80,$80,$80,$80
+
+player_names: ; six player names, max. 8 chars
         .byte   $00,$00,$00,$00,$00,$00,$00,$00
         .byte   $00,$00,$00,$00,$00,$00,$00,$00
         .byte   $00,$00,$00,$00,$00,$00,$00,$00
         .byte   $00,$00,$00,$00,$00,$00,$00,$00
         .byte   $00,$00,$00,$00,$00,$00,$00,$00
+        .byte   $00,$00,$00,$00,$00,$00,$00,$00
+
 LC053:  .byte   $00,$01,$02,$03,$04,$05
 LC059:  .byte   $00
 LC05A:  .byte   $00,$00,$00,$00,$00,$00,$00,$00
         .byte   $00,$00,$00,$00
 LC066:  .byte   $00,$00,$00,$00,$00,$00,$00,$00
         .byte   $00,$00,$00,$00
-LC072:  php
+
+handle_keyboard:
+        php
         sei
-        ldx     #$0B
+        ldx     #11
 LC076:  lda     LC05A,x
-        beq     LC07E
+        beq     :+
         dec     LC05A,x
-LC07E:  lda     LC0A1,x
+:       lda     kbdtab1,x
         sta     $DC00
         lda     $DC01
-        and     LC0AD,x
-        beq     LC091
+        and     kbdtab2,x
+        beq     LC091 ; key pressed
 LC08C:  dex
         bpl     LC076
         plp
@@ -50,214 +63,250 @@ LC091:  ldy     LC05A,x
         bne     LC08C
         inc     LC066,x
         bne     LC08C
-LC0A1:  .byte   $7F,$7F,$FB,$FD,$EF,$F7,$BF,$DF
-        .byte   $BF,$BF,$FE,$FE
-LC0AD:  .byte   $20,$80,$80,$10,$80,$10,$80,$10
-        .byte   $08,$02,$10,$20
-LC0B9:  ldy     #$00
-LC0BB:  pha
-        sta     $0400,y
+
+kbdtab1:
+        .byte   $7F,$7F,$FB,$FD,$EF,$F7,$BF,$DF,$BF,$BF,$FE,$FE
+kbdtab2:
+        .byte   $20,$80,$80,$10,$80,$10,$80,$10,$08,$02,$10,$20
+
+init_screen:
+        ldy     #$00
+:       pha
+        sta     $0400,y ; set screen colors
         sta     $0500,y
         sta     $0600,y
         sta     $0700,y
         lda     #$00
-        sta     $CA00,y
-        sta     $CB00,y
+        sta     page1,y ; clear two pages
+        sta     page2,y
         pla
         iny
-        bne     LC0BB
+        bne     :-
         lda     #$C8
-        sta     $D016
+        sta     $D016; default X scroll, 40 chars wide, hi-res
         lda     #$18
-        sta     $D018
+        sta     $D018; screen RAM at $0400, hi-res at $2000
         lda     #$00
-        sta     $C8B4
-        sta     $C9B4
+        sta     pagea + $B4
+        sta     pageb + $B4
         sta     LC241
         tay
         ldx     #$20
         stx     $FF
         sty     $FE
-LC0F0:  sta     ($FE),y
+:       sta     ($FE),y ; clear hi-res
         iny
-        bne     LC0F0
+        bne     :-
         inc     $FF
         dex
-        bne     LC0F0
+        bne     :-
         rts
+
 LC0FB:  .byte   $20,$21,$22,$23,$25,$26,$27,$28
         .byte   $2A,$2B,$2C,$2D,$2F,$30,$31,$32
         .byte   $34,$35,$36,$37,$39,$3A,$3B,$3C
         .byte   $3E,$3F
-LC115:  .byte   $7F,$BF,$DF,$EF,$F7,$FB,$FD,$FE
-LC11D:  .byte   $80,$40,$20,$10,$08,$04,$02,$01
-LC125:  pla
+
+and_tab:.byte   $7F,$BF,$DF,$EF,$F7,$FB,$FD,$FE
+or_tab: .byte   $80,$40,$20,$10,$08,$04,$02,$01
+
+LC125:  pla ; return two levels up
         pla
-        sec
+        sec ; error
         lda     #$00
         rts
-LC12B:  cpy     #$C8
-        bcs     LC125
-        ldx     $FD
-        beq     LC13C
+
+; converts a coordinate in ($FC/$FD)/Y into
+; * a byte offset into the framebuffer in $FE/$FF
+; * the lowest 3 bits of the coordinate in X and Y
+offset_from_coord:
+        cpy     #200
+        bcs     LC125 ; Y exceeds coord space
+        ldx     $FD   ; X MSB
+        beq     :+    ; zero is fine
         dex
-        bne     LC125
+        bne     LC125 ; != 1 -> error
         ldx     $FC
-        cpx     #$40
-        bcs     LC125
-LC13C:  pha
+        cpx     #320 - 256
+        bcs     LC125 ; > 320 -> error
+:       pha
         lda     $FC
         and     #$F8
-        sta     $FB
+        sta     $FB   ; X & ~3
         tya
-        pha
+        pha ; save Y coord
         lsr     a
         lsr     a
-        lsr     a
+        lsr     a     ; Y >> 3
         tay
         ror     a
         ror     a
         ror     a
         and     #$C0
         clc
-        adc     $FB
+        adc     $FB   ; + X & ~3
         sta     $FE
         lda     LC0FB,y
-        adc     $FD
+        adc     $FD   ; + X MSB
         sta     $FF
         lda     $FC
-        and     #$07
+        and     #$07  ; X & 7
         tax
-        pla
-        and     #$07
+        pla           ; Y
+        and     #$07  ; Y & 7
         tay
         pla
         rts
-LC165:  jsr     LC12B
+
+; sets (Z=1) or clears (Z=0) the pixel at coordinate ($FC/$FD)/Y
+set_or_clear_pixel:
+        jsr     offset_from_coord
         php
-        lda     ($FE),y
-        and     LC115,x
+        lda     ($FE),y   ; read framebuffer byte
+        and     and_tab,x ; clear bit
         plp
         beq     LC174
-        ora     LC11D,x
+        ora     or_tab,x  ; set bit
 LC174:  sta     ($FE),y
-        clc
+        clc               ; no error
         rts
-LC178:  jsr     LC12B
+
+; sets the pixel at coordinate ($FC/$FD)/Y
+set_pixel:
+        jsr     offset_from_coord
         lda     ($FE),y
-        and     LC11D,x
-        clc
+        and     or_tab,x
+        clc               ; no error
         rts
-LC182:  lda     #$C6
+
+draw_border:  
+; line on the right edge of the screen
+        lda     #198
         sta     $FA
-LC186:  ldy     $FA
+:       ldy     $FA ; Y coord
         lda     #$00
         sta     $FD
-        lda     #$01
+        lda     #$01 ; X coord = 1
         sta     $FC
-        jsr     LC165
+        jsr     set_or_clear_pixel ; set
         ldy     $FA
-        lda     #$01
+        lda     #>318
         sta     $FD
-        lda     #$3E
+        lda     #<318
         sta     $FC
-        jsr     LC165
+        jsr     set_or_clear_pixel ; set
         dec     $FA
-        bne     LC186
-LC1A4:  ldy     #$C6
+        bne     :-
+
+; line at the bottom edge of the screen
+:       ldy     #198
         lda     #$01
-        jsr     LC165
+        jsr     set_or_clear_pixel ; set
         ldy     #$01
         tya
-        jsr     LC165
+        jsr     set_or_clear_pixel ; set
         lda     $FC
         sec
-        sbc     #$01
+        sbc     #1
         sta     $FC
         lda     $FD
-        sbc     #$00
+        sbc     #0
         sta     $FD
-        bne     LC1A4
+        bne     :-
         lda     $FC
         cmp     #$01
-        bne     LC1A4
+        bne     :-
         rts
-LC1C7:  ldx     #$05
-LC1C9:  lda     LC053,x
+
+init_player_state:
+        ldx     #$05 ; copy tab1 into tab2
+:       lda     LC053,x
         tay
-        lda     LC1FC,y
-        sta     LC214,x
-        lda     LC202,y
-        sta     LC21A,x
-        lda     LC208,y
-        sta     LC220,x
-        lda     LC20E,y
-        sta     LC226,x
+        lda     tab1a,y
+        sta     tab2a,x
+        lda     tab1b,y
+        sta     tab2b,x
+        lda     tab1c,y
+        sta     tab2c,x
+        lda     tab1d,y
+        sta     tab2d,x
         dex
-        bpl     LC1C9
+        bpl     :-
+
         ldx     #$05
-LC1EA:  lda     LC003,x
-        sta     LC238,x
+:       lda     player_participating,x
+        sta     player_alive,x
         lda     #$80
-        sta     LC01D,x
-        sta     LC017,x
+        sta     tab5,x
+        sta     tab6,x
         dex
-        bpl     LC1EA
+        bpl     :-
         rts
-LC1FC:  .byte   $32,$0E,$32,$0E,$32,$0E
-LC202:  .byte   $00,$01,$00,$01,$00,$01
-LC208:  .byte   $32,$32,$64,$64,$96,$96
-LC20E:  .byte   $01,$03,$01,$03,$01,$03
-LC214:  .byte   $00,$00,$00,$00,$00,$00
-LC21A:  .byte   $00,$00,$00,$00,$00,$00
-LC220:  .byte   $00,$00,$00,$00,$00,$00
-LC226:  .byte   $00,$00,$00,$00,$00,$00
+
+tab1a:  .byte   $32,$0E,$32,$0E,$32,$0E
+tab1b:  .byte   $00,$01,$00,$01,$00,$01
+tab1c:  .byte   $32,$32,$64,$64,$96,$96
+tab1d:  .byte   $01,$03,$01,$03,$01,$03
+
+tab2a:  .byte   $00,$00,$00,$00,$00,$00
+tab2b:  .byte   $00,$00,$00,$00,$00,$00
+tab2c:  .byte   $00,$00,$00,$00,$00,$00
+tab2d:  .byte   $00,$00,$00,$00,$00,$00
+
 LC22C:  .byte   $00,$01,$00,$FF
 LC230:  .byte   $00,$00,$00,$FF
 LC234:  .byte   $FF,$00,$01,$00
-LC238:  .byte   $00,$00,$00,$00,$00,$00
-LC23E:  .byte   $00
+
+player_alive:
+        .byte   $00,$00,$00,$00,$00,$00
+
+current_player:
+        .byte   $00
+
 LC23F:  .byte   $00
 LC240:  .byte   $00
 LC241:  .byte   $00
-LC242:  ldx     #$05
-        stx     LC23E
+
+game_step:
+        ldx     #$05
+        stx     current_player
         inc     LC240
         lda     LC240
         and     #$1F
-        sta     LC240
-LC252:  lda     LC238,x
-        bne     LC25A
+        sta     LC240 ; Z(32)
+player_loop:
+        lda     player_alive,x
+        bne     :+
         jmp     LC303
-LC25A:  ldy     LC226,x
-        lda     LC214,x
+:       ldy     tab2d,x
+        lda     tab2a,x
         clc
         adc     LC22C,y
-        sta     LC214,x
+        sta     tab2a,x
         sta     $FC
-        lda     LC21A,x
+        lda     tab2b,x
         adc     LC230,y
-        sta     LC21A,x
+        sta     tab2b,x
         sta     $FD
-        lda     LC220,x
+        lda     tab2c,x
         clc
         adc     LC234,y
-        sta     LC220,x
+        sta     tab2c,x
         sta     $FA
         tay
-        jsr     LC178
+        jsr     set_pixel
         beq     LC2CE
-        ldx     LC23E
-        lda     #$00
-        sta     LC238,x
+        ldx     current_player
+        lda     #0
+        sta     player_alive,x ; player died!
         lda     LC23F
         sta     LC009,x
         inc     LC23F
         ldy     #$BF
-LC299:  lda     $CA00,y
+LC299:  lda     page1,y
         cmp     $FC
         bne     LC2A7
-        lda     $CB00,y
+        lda     page2,y
         cmp     $FA
         beq     LC2B2
 LC2A7:  dey
@@ -272,17 +321,17 @@ LC2B2:  tya
         lsr     a
         lsr     a
         ldx     LC241
-        cmp     LC23E
+        cmp     current_player
         beq     LC2AC
-        sta     LC01D,x
-        lda     LC23E
-        sta     LC017,x
+        sta     tab5,x
+        lda     current_player
+        sta     tab6,x
         inc     LC241
         bpl     LC2AC
 LC2CE:  ldy     $FA
         lda     #$01
-        jsr     LC165
-        lda     LC23E
+        jsr     set_or_clear_pixel
+        lda     current_player
         asl     a
         asl     a
         asl     a
@@ -291,58 +340,61 @@ LC2CE:  ldy     $FA
         ora     LC240
         tay
         lda     $FC
-        sta     $CA00,y
+        sta     page1,y
         lda     $FA
-        sta     $CB00,y
-        lda     $FA
-        beq     LC30F
-        cmp     #$C7
-        beq     LC30F
+        sta     page2,y
+; test for escape
+        lda     $FA ; Y coord
+        beq     player_escaped ; Y == 0 -> escaped
+        cmp     #199
+        beq     player_escaped ; Y == 199 -> escaped
         lda     $FD
         ora     $FC
-        beq     LC30F
+        beq     player_escaped ; X == 0 -> escaped
         lda     $FD
         beq     LC303
         lda     $FC
-        cmp     #$3F
-        beq     LC30F
-LC303:  dec     LC23E
-        ldx     LC23E
-        bmi     LC30E
-        jmp     LC252
-LC30E:  rts
-LC30F:  lda     LC23E
-        sta     LC010
+        cmp     #320 - 256 - 1
+        beq     player_escaped ; X == 319 -> escaped
+LC303:  dec     current_player
+        ldx     current_player
+        bmi     :+
+        jmp     player_loop
+:       rts
+player_escaped:
+        lda     current_player
+        sta     escaped_player
         rts
-LC316:  jsr     LC072
+
+LC316:  jsr     handle_keyboard
         ldy     #$05
-        sty     LC23E
-LC31E:  lda     LC003,y
+        sty     current_player
+LC31E:  lda     player_participating,y
         beq     LC335
         lda     LC011,y
         tay
-        ldx     LC23E
+        ldx     current_player
         lda     LC066,y
         bne     LC344
         iny
         lda     LC066,y
         bne     LC33E
-LC335:  dec     LC23E
-        ldy     LC23E
+LC335:  dec     current_player
+        ldy     current_player
         bpl     LC31E
         rts
-LC33E:  dec     LC226,x
+LC33E:  dec     tab2d,x
         jmp     LC347
-LC344:  inc     LC226,x
-LC347:  lda     LC226,x
+LC344:  inc     tab2d,x
+LC347:  lda     tab2d,x
         and     #$03
-        sta     LC226,x
+        sta     tab2d,x
         lda     #$00
         sta     LC066,y
         jmp     LC335
-LC357:  lda     #$C8
-LC35A           := * + 1
-        bit     $C9A9
+LC357:  lda     #>pagea
+        .byte $2c
+LC35A:  lda     #>pageb
         sta     LC3E1
         sta     LC3E6
         sta     LC3EB
@@ -373,13 +425,14 @@ LC35A           := * + 1
         sta     LC482
         sta     LC3C1
         rts
+
 LC3B4:  jsr     LC357
-        lda     $C8B4
+        lda     pagea + $B4
         beq     LC3BF
         jsr     LC35A
 LC3BF:
 LC3C1           := * + 2
-        lda     $C8B4
+        lda     pagea + $B4
         beq     LC3DB
         lda     $FA
         pha
@@ -398,32 +451,32 @@ LC3C1           := * + 2
 LC3DB:  ldy     #$13
         lda     #$32
 LC3E1           := * + 2
-        sta     $C8B4
+        sta     pagea + $B4
 LC3E2:  lda     $FA
 LC3E6           := * + 2
-        sta     $C83C,y
+        sta     pagea + $3C,y
         lda     $FC
 LC3EB           := * + 2
-        sta     $C800,y
+        sta     pagea + $00,y
         lda     $FD
 LC3F0           := * + 2
-        sta     $C814,y
+        sta     pagea + $14,y
         jsr     LC413
         sbc     #$80
 LC3F8           := * + 2
-        sta     $C864,y
+        sta     pagea + $64,y
         lda     #$00
         sbc     #$00
 LC3FF           := * + 2
-        sta     $C878,y
+        sta     pagea + $78,y
         jsr     LC413
         sbc     #$80
 LC407           := * + 2
-        sta     $C88C,y
+        sta     pagea + $8C,y
         lda     #$00
         sbc     #$00
 LC40E           := * + 2
-        sta     $C8A0,y
+        sta     pagea + $A0,y
         dey
         bpl     LC3E2
         rts
@@ -439,47 +492,47 @@ LC422:  jsr     LC357
         jsr     LC35A
 LC42B:
 LC42D           := * + 2
-        lda     $C8B4
+        lda     pagea + $B4
         beq     LC420
         lda     #$00
         jsr     LC470
 LC437           := * + 2
-        dec     $C8B4
+        dec     pagea + $B4
         beq     LC420
         ldy     #$13
 LC43C:
 LC43E           := * + 2
-        lda     $C850,y
+        lda     pagea + $50,y
         clc
 LC442           := * + 2
-        adc     $C88C,y
+        adc     pagea + $8C,y
 LC445           := * + 2
-        sta     $C850,y
+        sta     pagea + $50,y
 LC448           := * + 2
-        lda     $C83C,y
+        lda     pagea + $3C,y
 LC44B           := * + 2
-        adc     $C8A0,y
+        adc     pagea + $A0,y
 LC44E           := * + 2
-        sta     $C83C,y
+        sta     pagea + $3C,y
 LC451           := * + 2
-        lda     $C828,y
+        lda     pagea + $28,y
         clc
 LC455           := * + 2
-        adc     $C864,y
+        adc     pagea + $64,y
 LC458           := * + 2
-        sta     $C828,y
+        sta     pagea + $28,y
 LC45B           := * + 2
-        lda     $C800,y
+        lda     pagea + $00,y
 LC45E           := * + 2
-        adc     $C878,y
+        adc     pagea + $78,y
 LC461           := * + 2
-        sta     $C800,y
+        sta     pagea + $00,y
 LC464           := * + 2
-        lda     $C814,y
+        lda     pagea + $14,y
 LC467           := * + 2
-        adc     $C878,y
+        adc     pagea + $78,y
 LC46A           := * + 2
-        sta     $C814,y
+        sta     pagea + $14,y
         dey
         bpl     LC43C
         lda     #$01
@@ -488,107 +541,115 @@ LC470:  pha
         stx     LC493
 LC476:
 LC478           := * + 2
-        lda     $C800,x
+        lda     pagea + $00,x
         sta     $FC
 LC47D           := * + 2
-        lda     $C814,x
+        lda     pagea + $14,x
         sta     $FD
 LC482           := * + 2
-        lda     $C83C,x
+        lda     pagea + $3C,x
         tay
         pla
         pha
-        jsr     LC165
+        jsr     set_or_clear_pixel
         dec     LC493
         ldx     LC493
         bpl     LC476
         pla
         rts
-LC493:  brk
-LC494:  jsr     LC0B9
-        jsr     LC1C7
-        jsr     LC182
-        jsr     LC548
+
+LC493:  .byte 0
+
+; the main program
+; * draws the playing field
+; * draws the player names
+; * enables a raster interrupt for every frame that handles the game play
+; * busy waits until the game has ended
+entry:  jsr     init_screen
+        jsr     init_player_state
+        jsr     draw_border
+        jsr     show_player_names
         lda     #$00
         sta     LC23F
-        sta     $DC0E
+        sta     $DC0E ; stop CIA1 Timer A
         lda     #$14
         sta     LC059
         lda     #$80
-        sta     LC010
+        sta     escaped_player
         lda     #$3B
-        sta     $D011
+        sta     $D011 ; enable hi-res graphics mode
         lda     #$00
         tax
         tay
-LC4BB:  dex
-        bne     LC4BB
+:       dex
+        bne     :-
         dey
-        bne     LC4BB
+        bne     :-
         clc
-        adc     #$01
-        cmp     #$05
-        bcc     LC4BB
-        ldx     #$1D
-        ldy     #$C5
+        adc     #1
+        cmp     #5
+        bcc     :-     ; delay 1.6 sec
+        ldx     #<irq
+        ldy     #>irq
         sei
         stx     $0314
         sty     $0315
-        lda     #$E6
-        sta     $D012
+        lda     #230
+        sta     $D012 ; line for raster IRQ
         lda     #$81
-        sta     $D01A
+        sta     $D01A ; enable raster IRQ
         cli
-LC4DE:  lda     LC010
-        bpl     LC504
+main_loop:
+        lda     escaped_player
+        bpl     end_game
         lda     #$80
-        sta     LC00F
-        ldy     #$00
-        ldx     #$05
-LC4EC:
-LC4EE           := * + 2
-        lda     LC238,x
-        beq     LC4F5
-LC4F2           := * + 1
-        stx     LC00F
+        sta     winner ; no winner
+        ldy     #0
+        ldx     #5
+l1:     lda     player_alive,x
+        beq     :+
+        stx     winner
         iny
-LC4F5:  dex
-        bpl     LC4EC
-        cpy     #$02
-        bcs     LC4DE
-        lda     $C8B4
-        ora     $C9B4
-        bne     LC4DE
-LC504:  ldx     #$34
-        ldy     #$EA
+:       dex
+        bpl     l1
+        cpy     #2
+        bcs     main_loop ; more than one player alive
+        lda     pagea + $B4
+        ora     pageb + $B4
+        bne     main_loop
+end_game:
+        ldx     #<$EA34 ; restore IRQ handler
+        ldy     #>$EA34 ; (minus soft RTC driver)
         sei
         stx     $0314
         sty     $0315
         lda     #$00
-        sta     $D01A
+        sta     $D01A ; disable raster IRQ
         sta     $C6
         lda     #$01
-        sta     $DC0E
+        sta     $DC0E ; re-enable CIA1 Timer A
         cli
         rts
-        lda     $D019
+
+irq:    lda     $D019 ; ACK raster IRQ
         sta     $D019
         lda     LC059
         bmi     LC530
         dec     LC059
         bne     LC530
-        jsr     LC548
-LC530:  jsr     LC242
+        jsr     show_player_names
+LC530:  jsr     game_step
         jsr     LC316
         jsr     LC422
-        jmp     LEA81
-LC53C:  bne     LC4EE
-        bvc     LC570
-        bne     LC4F2
+        jmp     $EA81 ; KERNAL RTI code
+
+LC53C:  .byte   $D0,$B0,$50,$30,$D0,$B0
 LC542:  .byte   $23,$24,$2B,$2C,$32,$33
-LC548:  ldx     #$00
+
+show_player_names:
+        ldx     #$00
         sei
-        lda     #$33
+        lda     #$33 ; enable char ROM at $D000
         sta     $01
 LC54F:  txa
         lsr     a
@@ -603,23 +664,24 @@ LC54F:  txa
         sta     $FF
         lda     #$08
         sta     $FB
-LC566:  lda     LC023,x
-        beq     LC582
+LC566:  lda     player_names,x
+        beq     skip_player
         sec
         sbc     #$20
         asl     a
         asl     a
-LC570:  asl     a
+        asl     a
         sta     $F8
         lda     #$D0
         sta     $F9
         ldy     #$07
-LC579:  lda     ($F8),y
+:       lda     ($F8),y
         eor     ($FE),y
         sta     ($FE),y
         dey
-        bpl     LC579
-LC582:  lda     $FE
+        bpl     :-
+skip_player:
+        lda     $FE
         clc
         adc     #$08
         sta     $FE
@@ -635,6 +697,6 @@ LC582:  lda     $FE
         sta     $01
         cli
         rts
+
         cli
         rts
-        .byte   $CB
