@@ -1,9 +1,14 @@
-; Ultimage Tron II by Oliver Stiller 1989
+; Ultimate Tron II by Oliver Stiller 1989
 ;
 ; disassembled and commented by Michael Steil <mist64@mac.com> 2015
 ;
 
         .setcpu "6502"
+
+.segment "LOADADDR"
+.addr   *+2
+
+.segment "CODE"
 
 ; temporary data for two concurrent explosions
 explosion1 := $C800
